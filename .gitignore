@@ -3,3 +3,5 @@ HyperEF_julia/**
 .ipynb_checkpoints
 **/__pycache__
 eff_res_plot
+dataset
+.vscode

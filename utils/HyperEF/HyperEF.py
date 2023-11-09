@@ -1,6 +1,5 @@
-from functions import Filter, HyperEdgeScore, get_num_nodes
-from utils.hypergraph_conversion import StarW, FullCliqueW, ExpanderCliqueW
-from utils.pklz2hinc import pklz_to_incmat
+from utils.HyperEF.functions import Filter, HyperEdgeScore, get_num_nodes
+from utils.hypergraph_conversion import StarW, FullCliqueW, ExpanderCliqueW, pklz_to_incmat
 import numpy as np
 from numpy.linalg import qr
 import argparse
@@ -121,16 +120,9 @@ def HyperEF(hinc:list, L :int = 3, R :float = 0.5):
     return idx_mat, hinc_new
 
 
-def run_HyperEF():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--level', type=int, help='Coarsening level')
-    parser.add_argument('--pklz', type=str, help='Pickle file converted from DEF file')
-    args = parser.parse_args()
+def run_HyperEF(pklz, level):
     
-    _, hinc = pklz_to_incmat(args.pklz)
-    idx_mat, hinc_new = HyperEF(hinc, args.level)
+    _, hinc = pklz_to_incmat(pklz)
+    idx_mat, hinc_new = HyperEF(hinc, level)
 
-
-if __name__ == "__main__":
-    sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
-    run_HyperEF()
+    return idx_mat, hinc_new
