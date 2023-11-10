@@ -15,4 +15,3 @@ with gzip.open(f'../DREAMPlace/install/dataset/{top}/{top}_0.7_1.0.icc2.pklz') a
 
 H, net2node, mapper = pklz_to_incmat(xx)
 idx_mat, xx = HyperEF(net2node, 3)
-

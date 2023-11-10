@@ -10,6 +10,7 @@ import ray
 
 # from utils.HyperEF import HyperEF
 from utils.hypergraph_conversion import *
+from utils.functions import *
 
 def HPWL(pklz_, new_net_mapper, dir="dataset/y_HPWL"):
     dset_name = pklz_[0]

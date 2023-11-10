@@ -1,5 +1,6 @@
 from utils.HyperEF.functions import *
-from utils.hypergraph_conversion import StarW, FullCliqueW, ExpanderCliqueW, pklz_to_incmat
+from utils.hypergraph_conversion import StarW, FullCliqueW, ExpanderCliqueW
+from utils.functions import pklz_to_incmat
 import numpy as np
 from numpy.linalg import qr
 import argparse
@@ -57,7 +58,6 @@ def HyperEF(hinc: list, L :int = 3, R :float = 0.5):
         hscore = HyperEdgeScore(hinc, SV)
         Eratio = np.divide(hscore, np.sum(hscore, axis=0))
 
-        print(Eratio.shape)
         if loop == 0:
             np.save("../HyperEF_julia/src/tmp/aes_cipher_top_py", Eratio)
 
@@ -97,7 +97,6 @@ def HyperEF(hinc: list, L :int = 3, R :float = 0.5):
         idx[fdz] = np.arange(val, val + len(fdz))
 
         Neff_new = np.append(Neff_new, Neff[fdz])
-        print(len(Neff_new), len(fdz), len(Neff))
         idx_mats.append(idx)
 
         hinc_new = []

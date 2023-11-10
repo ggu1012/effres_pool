@@ -1,50 +1,10 @@
 import numpy as np
 from scipy.sparse import csr_array, csc_array, diags
 from math import ceil, floor
-import gzip
 import numpy as np
-import pickle
 import dgl
 import torch
 from scipy.sparse import csc_array
-
-
-def pklz_to_incmat(pkl):
-    """
-    Convert obtained dataset (.pklz) to hypergraph incidence matrix (scipy.sparse.csc)
-    - Remove singleton edges and nodes
-    return: H (scipy.sparse), net2node (list)
-    """
-
-    pin2net = np.array(pkl["pin_info"]["pin2net_map"])
-    pin2node = np.array(pkl["pin_info"]["pin2node_map"])
-
-    # init hypergraph incidence matrix
-    H = csc_array((np.ones(len(pin2net)), (pin2node, pin2net)))
-
-    # find and remove singleton edge
-    e_deg = H.sum(axis=0).flatten()
-    singleton_edge_idx = np.nonzero(e_deg <= 1)[0]
-
-    net2node = [[] for _ in range(H.shape[1])]
-
-    for pin, net in enumerate(pin2net):
-        net2node[net].append(pin2node[pin])
-
-    new_net_mapper = []
-    for i, net in enumerate(net2node):
-        net2node[i] = list(set(net))
-        if i not in singleton_edge_idx:
-            new_net_mapper.append(i)
-
-    net2node = np.array(net2node, dtype=object)
-    net2node = np.delete(net2node, singleton_edge_idx)
-
-    # remove singleton hedge in inc mat
-    H = H[:, np.array(new_net_mapper)]
-
-    return H, net2node, new_net_mapper
-
 
 def StarW(hinc: list, W: list):
     num_nodes = 0
@@ -215,4 +175,3 @@ def star_hetero(H):
 
 
 
-    

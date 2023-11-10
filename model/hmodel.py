@@ -5,48 +5,48 @@ import torch.nn.functional as F
 
 
 class HGNN(nn.Module):
-    def __init__(self, Hs, ASMs, in_dim, hidden_dims, out_dim):
+    def __init__(self, Hs, ASMs, in_dim, hidden_dims, out_dim, device='cpu'):
         super().__init__()
 
         assert len(hidden_dims) % 2 == 0
         assert len(Hs) == len(ASMs) + 1
         assert len(Hs) * 2 - 2 == len(hidden_dims)
 
-        self.pool_level = len(hidden_dims) / 2
-        coarsest_hidden_dim_idx = len(hidden_dims) / 2
+        self.pool_level = int(len(hidden_dims) / 2)
+        coarsest_hidden_dim_idx = int(len(hidden_dims) / 2) - 1
 
         self.W = []
-        self.W.append(nn.Linear(in_dim, hidden_dims[0]))
+        self.W.append(nn.Linear(in_dim, hidden_dims[0]).to(device))
 
         for i in range(int(len(hidden_dims) / 2) - 1):
-            self.W.append(nn.Linear(hidden_dims[i], hidden_dims[i + 1]))
+            self.W.append(nn.Linear(hidden_dims[i], hidden_dims[i + 1]).to(device))
 
         self.W.append(
             nn.Linear(
                 hidden_dims[coarsest_hidden_dim_idx],
                 hidden_dims[coarsest_hidden_dim_idx + 1],
-            )
+            ).to(device)
         )
 
-        # skip connection
-        for i in range(coarsest_hidden_dim_idx + 1, len(hidden_dims)):
+        # Uplift and MLP with skip connection
+        for i in range(coarsest_hidden_dim_idx + 1, len(hidden_dims)-1):
             self.W.append(
                 nn.Linear(
                     hidden_dims[i] + hidden_dims[len(hidden_dims) - 1 - i],
                     hidden_dims[i + 1],
-                )
+                ).to(device)
             )
 
-        self.W.append(nn.Linear(hidden_dims[-1], out_dim))
-
-        self.ASMs = ASMs
+        self.W.append(nn.Linear(hidden_dims[0] + hidden_dims[-1], out_dim).to(device))
+        self.ASMs = [x.to(device) for x in ASMs]
         self.P = []
         for ASM in self.ASMs:
             # ASM.shape == (cluster, num_nodes)
             D = dglsp.diag(1 / ASM.sum(dim=1))
-            self.P.append(D @ ASM)
+            Uplift = D @ ASM
+            self.P.append(Uplift.to(device))
 
-        self.dropout = nn.Dropout(0.5)
+        self.dropout = nn.Dropout(0.5).to(device)
 
         ###########################################################
         # (HIGHLIGHT) Compute the Laplacian with Sparse Matrix API
@@ -54,30 +54,40 @@ class HGNN(nn.Module):
 
         self.Ls = []
         for H in Hs:
+            H = H.to(device)
             # Compute node degree.
-            d_V = H.sum(1)
+            d_V = H.sum(1).to(device)
             # Compute edge degree.
-            d_E = H.sum(0)
+            d_E = H.sum(0).to(device)
             # Compute the inverse of the square root of the diagonal D_v.
-            D_v_invsqrt = dglsp.diag(d_V**-0.5)
+            D_v_invsqrt = dglsp.diag(d_V**-0.5).to(device)
             # Compute the inverse of the diagonal D_e.
-            D_e_inv = dglsp.diag(d_E**-1)
+            D_e_inv = dglsp.diag(d_E**-1).to(device)
             # In our example, B is an identity matrix.
             n_edges = d_E.shape[0]
-            B = dglsp.identity((n_edges, n_edges))
+            B = dglsp.identity((n_edges, n_edges)).to(device)
             # Compute Laplacian from the equation above.
-            self.Ls.append(D_v_invsqrt @ H @ B @ D_e_inv @ H.T @ D_v_invsqrt)
+            x = D_v_invsqrt @ H
+            x = x @ B
+            x = x @ D_e_inv
+            y = H.transpose() @ D_v_invsqrt
+            L = x @ y
+            self.Ls.append(L)
+
+        print(f"Ls shape: {[x.shape for x in self.Ls]}")
+        print(f"P shape: {[x.shape for x in self.P]}")
 
     def forward(self, X):
         hidden = []
 
         # Goes down
+        #   MLP
         # o ----
-        #        \
+        #        \  Pool
         #         \
         #          o
         for i in range(self.pool_level):
-            X = self.core_forward(i, X)
+            X = self.core_forward(i, X, rev=False)
             X = F.relu(X)
             hidden.append(X)
             X = self.pool(X, i)
@@ -86,22 +96,32 @@ class HGNN(nn.Module):
         X = F.relu(X)
 
         # Goes up
-        for i in range(self.pool_level - 1):
+        #              MLP
+        #             ---- o
+        #            /
+        #   Uplift  /
+        #          o
+
+        for i in range(self.pool_level, 2*self.pool_level - 1):
             X = self.unravel(X, i)
-            X = torch.concat([X, hidden[self.pool_level - i - 1]])
-            X = self.core_forward(self.pool_level + i, X)
+            X = torch.hstack([X, hidden[self.pool_level - i - 1]]) # -1, -2, ...
+            X = self.core_forward(i + 1, X)
             X = F.relu(X)
 
         # Final output dim
+        X = self.unravel(X, 2*self.pool_level - 1)
+        X = torch.hstack([X, hidden[0]])
         X = self.core_forward(2 * self.pool_level, X)
 
-    def core_forward(self, i, X):
+        return X
+
+    def core_forward(self, i, X, rev=False):
         X = self.dropout(X)
         X = self.W[i](X)
         if i <= self.pool_level:
-            X = self.L[i] @ X
+            X = self.Ls[i] @ X
         else:
-            X = self.L[self.pool_level - i] @ X
+            X = self.Ls[self.pool_level - i - 1] @ X
         return X
 
     def pool(self, X, i):
@@ -114,4 +134,3 @@ class HGNN(nn.Module):
 
     def unravel(self, X, i):
         return self.ASMs[self.pool_level - i - 1].T @ X
-
