@@ -31,17 +31,32 @@ def Filter(rand_vec, gram_schmidt_iter, adj_mat, num_nodes, interval, num_vecs):
         # print(sm_ot[0])
         # print(sm_norm[0])
         # print("K: ", loop, " ", sm.dot(one_vec) / one_vec.dot(one_vec))
-        sm_vec[:, loop] = sm_norm[:num_nodes] # get edge-nodes for star
+        sm_vec[:, loop] = sm_norm[:num_nodes] # get cell-nodes for star
         
     return sm_vec[:,::interval]
 
 def HyperEdgeScore(hg, SV):
     score = np.zeros((len(hg), SV.shape[1]))
     for eid, nodes in enumerate(hg):
-        x = SV[nodes]
+        x = SV[np.array(nodes, dtype=int)]
         mx = np.max(x, axis=0)
         mn = np.min(x, axis=0)
         score[eid] = np.power((mx - mn), 2)
+    return score
+
+def orig_HyperEdgeScore(hg, SV):
+    score = np.zeros(len(hg))
+    for eid, nodes in enumerate(hg):
+        x = SV[np.array(nodes, dtype=int)]
+        mx = max(x)
+        mn = min(x)
+        # mx = -inf
+        # mn = inf
+        # for node in nodes:
+        #     x = SV[node]
+        #     mx = x if x > mx else mx
+        #     mn = x if x < mn else mn
+        score[eid] += np.power((mx - mn), 2)
     return score
 
 def get_num_nodes(hinc):

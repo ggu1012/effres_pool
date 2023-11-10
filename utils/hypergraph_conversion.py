@@ -23,8 +23,8 @@ def pklz_to_incmat(pkl):
     H = csc_array((np.ones(len(pin2net)), (pin2node, pin2net)))
 
     # find and remove singleton edge
-    e_deg = H.sum(axis=1).flatten()
-    singleton_edge_idx = np.nonzero(e_deg < 1)[0]
+    e_deg = H.sum(axis=0).flatten()
+    singleton_edge_idx = np.nonzero(e_deg <= 1)[0]
 
     net2node = [[] for _ in range(H.shape[1])]
 
@@ -33,10 +33,12 @@ def pklz_to_incmat(pkl):
 
     new_net_mapper = []
     for i, net in enumerate(net2node):
-        if i in singleton_edge_idx:
-            continue
         net2node[i] = list(set(net))
-        new_net_mapper.append(i)
+        if i not in singleton_edge_idx:
+            new_net_mapper.append(i)
+
+    net2node = np.array(net2node, dtype=object)
+    net2node = np.delete(net2node, singleton_edge_idx)
 
     # remove singleton hedge in inc mat
     H = H[:, np.array(new_net_mapper)]

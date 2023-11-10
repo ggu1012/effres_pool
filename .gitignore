@@ -5,3 +5,5 @@ HyperEF_julia/**
 eff_res_plot
 dataset
 .vscode
+*.ipynb
+*.csv

@@ -120,28 +120,28 @@ def generate_dataset(dsets):
     return yflag + xflag
 
 if __name__ == "__main__":
-    # dset_dirs = glob('../DREAMPlace/install/dataset/*')
-    # dset_files = []
-    # for dset_dir in dset_dirs:
-    #     dset_name = os.path.basename(dset_dir)
-    #     dset_files += glob(f'../DREAMPlace/install/dataset/{dset_name}/*.icc2.pklz')
-    # random.shuffle(dset_files)
+    dset_dirs = glob('../DREAMPlace/install/dataset/*')
+    dset_files = []
+    for dset_dir in dset_dirs:
+        dset_name = os.path.basename(dset_dir)
+        dset_files += glob(f'../DREAMPlace/install/dataset/{dset_name}/*.icc2.pklz')
+    random.shuffle(dset_files)
 
-    # dset_file_split = []
-    # files_per_chunk = 10
-    # th_num = round(len(dset_files) / files_per_chunk)
-    # for t in range(th_num - 1):
-    #     dset_file_split.append(dset_files[t:files_per_chunk*(t+1)])
-    # dset_file_split[-1] += dset_files[files_per_chunk*t:]
+    dset_file_split = []
+    files_per_chunk = 10
+    th_num = round(len(dset_files) / files_per_chunk)
+    for t in range(th_num - 1):
+        dset_file_split.append(dset_files[t:files_per_chunk*(t+1)])
+    dset_file_split[-1] += dset_files[files_per_chunk*t:]
 
-    # ray.init()
-    # job_list = [generate_dataset.remote(x) for x in dset_file_split]
-    # print(f"Jobs : {len(job_list)}")
-    # result = ray.get(job_list)
+    ray.init()
+    job_list = [generate_dataset.remote(x) for x in dset_file_split]
+    print(f"Jobs : {len(job_list)}")
+    result = ray.get(job_list)
 
-    with gzip.open('../DREAMPlace/install/dataset/bsg_chip/bsg_chip_0.7_1.0.icc2.pklz', 'rb') as f:
-        obj = pickle.load(f)
-    H, net2node, new_net_mapper = pklz_to_incmat(obj)
-    xx = star_hetero(H)
-    print(xx)
+    # with gzip.open('../DREAMPlace/install/dataset/bsg_chip/bsg_chip_0.7_1.0.icc2.pklz', 'rb') as f:
+    #     obj = pickle.load(f)
+    # H, net2node, new_net_mapper = pklz_to_incmat(obj)
+    # xx = star_hetero(H)
+    # print(xx)
 

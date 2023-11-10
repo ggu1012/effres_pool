@@ -1,4 +1,4 @@
-from utils.HyperEF.functions import Filter, HyperEdgeScore, get_num_nodes
+from utils.HyperEF.functions import *
 from utils.hypergraph_conversion import StarW, FullCliqueW, ExpanderCliqueW, pklz_to_incmat
 import numpy as np
 from numpy.linalg import qr
@@ -7,20 +7,25 @@ import sys
 import os
 
 
-def HyperEF(hinc:list, L :int = 3, R :float = 0.5):
+def HyperEF(hinc: list, L :int = 3, R :float = 0.5):
     """
     L: # of loops for coarsening
     R: Effective resistance threshold for coarsening 
     """
     # get num nodes
     num_nodes = get_num_nodes(hinc)
-    num_edges = len(hinc)
-
     Neff = np.zeros(num_nodes, dtype=float)
-    idx_mat = []
+
+    idx_mats = []
+    hinc_news = []
 
     for loop in range(L):
         print(f"Inside loop {loop + 1}")
+
+        # get num nodes
+        num_nodes = get_num_nodes(hinc)
+        num_edges = len(hinc)
+
         # init weight
         W = np.ones(num_edges)
         A = StarW(hinc, W)
@@ -38,7 +43,6 @@ def HyperEF(hinc:list, L :int = 3, R :float = 0.5):
 
         for ii in range(num_rand_vecs):
             rand_vec = (np.random.rand(A.shape[0]) - 0.5) * 2
-            # rand_vec = np.load('HyperEF/src/tmp/ariane_rv.npz').flatten()
             sm = Filter(rand_vec, gram_schmidt_iter, adj_mat, num_nodes, interval, num_vecs)
             SV[:, ii * num_filtered_vecs: (ii+1) * num_filtered_vecs] = sm
 
@@ -46,12 +50,16 @@ def HyperEF(hinc:list, L :int = 3, R :float = 0.5):
         # QR decomposition to make every approx. eigvecs. orthogonal to each other
 
         # for jj in range(SV.shape[1]):
-        #     hscore = HyperEdgeScore(hinc, SV[:,jj])
+        #     hscore = orig_HyperEdgeScore(hinc, SV[:,jj])
         #     Eratio[:,jj] = hscore / sum(hscore)
 
         # SV.shape = (num_nodes, num_vecs)
         hscore = HyperEdgeScore(hinc, SV)
-        Eratio = np.divide(hscore, np.sum(hscore, axis=1)[:, np.newaxis])
+        Eratio = np.divide(hscore, np.sum(hscore, axis=0))
+
+        print(Eratio.shape)
+        if loop == 0:
+            np.save("../HyperEF_julia/src/tmp/aes_cipher_top_py", Eratio)
 
         E2 = np.sort(Eratio, axis=1)[:,::-1]
         Evec = E2[:,0]
@@ -65,15 +73,15 @@ def HyperEF(hinc:list, L :int = 3, R :float = 0.5):
             (1 + np.divide(1, P[PosP[:Nsample]], where=P[PosP[:Nsample]]!=0))
         
         flag = np.zeros(num_nodes, dtype=bool)
-        idx = np.zeros(num_nodes, dtype =int)
+        idx = -1 * np.ones(num_nodes, dtype =int)
         Neff_new = []
 
-        # hedge index with higer hedge weight
+        # hedge index with higher hedge weight
         Pos = np.argsort(W,)[::-1]
 
-        val = 1
+        val = 0
         for ii in range(Nsample):
-            nd = np.array(hinc[Pos[ii]])
+            nd = np.array(hinc[Pos[ii]], dtype=int)
             fg = flag[nd]
             fd1 = np.nonzero(fg == False)[0]
             if len(fd1) > 1:
@@ -85,16 +93,17 @@ def HyperEF(hinc:list, L :int = 3, R :float = 0.5):
                 new_val = Evec[Pos[ii]] + sum(Neff[nd])
                 Neff_new.append(new_val)
 
-        fdz = np.nonzero(idx == 0)[0]
-        idx[fdz] = np.arange(val-1, val + len(fdz) -1)
+        fdz = np.nonzero(idx == -1)[0]
+        idx[fdz] = np.arange(val, val + len(fdz))
 
-        Neff_new.append(Neff[fdz])
-        idx_mat.append(idx)
+        Neff_new = np.append(Neff_new, Neff[fdz])
+        print(len(Neff_new), len(fdz), len(Neff))
+        idx_mats.append(idx)
 
         hinc_new = []
 
         for ii in range(len(hinc)):
-            nd = hinc[ii]
+            nd = np.array(hinc[ii], dtype=int)
             nd_new = set(idx[nd])
             hinc_new.append(tuple(sorted(nd_new)))
 
@@ -106,7 +115,6 @@ def HyperEF(hinc:list, L :int = 3, R :float = 0.5):
             if len(hinc_new[ii]) == 1:
                 singleton.append(i)
 
-
         fdnu = np.delete(fdnu, singleton)
         W2 = W[fdnu]
         hinc_new = hinc_new[fdnu]
@@ -115,9 +123,15 @@ def HyperEF(hinc:list, L :int = 3, R :float = 0.5):
         singleton_idx = [i for i,x in enumerate(hinc_new) if len(x) == 1]
         
         hinc_new = np.delete(hinc_new, singleton_idx).tolist()
-        W2 = np.delete(W2, singleton_idx).tolist()
+        W_new = np.delete(W2, singleton_idx).tolist()
+        hinc_news.append(hinc_new)
+
+        hinc = hinc_new
+        Neff = Neff_new
+        W = W_new
+
     
-    return idx_mat, hinc_new
+    return idx_mats, hinc_news
 
 
 def run_HyperEF(pklz, level):
