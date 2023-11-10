@@ -67,3 +67,12 @@ def get_num_nodes(hinc):
                 num_nodes = y
     num_nodes += 1
     return num_nodes
+
+def multi_level_mapper(idx_mat_collection):
+    idx_mats = [np.array(x) for x in idx_mat_collection]
+
+    new_idx_mat = np.arange(len(idx_mat_collection[0]))
+    for level in range(len(idx_mats)):
+        new_idx_mat = idx_mats[level][new_idx_mat]
+
+    return new_idx_mat
