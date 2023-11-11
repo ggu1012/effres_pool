@@ -6,6 +6,7 @@ import numpy as np
 import pickle
 import dgl
 import torch
+from torch.utils.data import Dataset
 from scipy.sparse import csc_array
 import dgl.sparse as dglsp
 
@@ -18,6 +19,8 @@ def pklz_to_incmat(pkl):
 
     pin2net = np.array(pkl["pin_info"]["pin2net_map"])
     pin2node = np.array(pkl["pin_info"]["pin2node_map"])
+    pin_direction = np.array(pkl["pin_info"]["pin_direct"])
+    net_num = max(pin2net) + 1
 
     # init hypergraph incidence matrix
     H = csc_array((np.ones(len(pin2net)), (pin2node, pin2net)))
@@ -27,13 +30,25 @@ def pklz_to_incmat(pkl):
     singleton_edge_idx = np.nonzero(e_deg <= 1)[0]
 
     net2node = [[] for _ in range(H.shape[1])]
+    net_out = -1 * np.ones(net_num, dtype=int)
 
-    for pin, net in enumerate(pin2net):
-        net2node[net].append(pin2node[pin])
+    # find and remove net with no output pin
+    for pin in range(len(pin2node)):
+        v = pin2node[pin]
+        e = pin2net[pin]
+        dir = pin_direction[pin]
+        net2node[e].append(v)
+        if dir == b"OUTPUT":
+            net_out[e] = v
+    no_out_net_idx = np.nonzero(net_out == -1)[0]
+
+    net2node = np.array([list(set(x)) for x in net2node], dtype=object)
 
     ### incidence matrix w/ sparse mat.
+    remove_net_idx = np.union1d(no_out_net_idx, singleton_edge_idx)
+
     # remove singleton hedge in inc mat
-    new_net_mapper = np.delete(np.arange(H.shape[1]), singleton_edge_idx)
+    new_net_mapper = np.delete(np.arange(H.shape[1]), remove_net_idx)
     H = H[:, np.array(new_net_mapper)]
 
     void_node = np.nonzero(H.sum(axis=1) == 0)[0]
@@ -71,3 +86,25 @@ def coo_to_dglsp(row: np.array, col: np.array):
     _row = torch.tensor(row, dtype=int)
     _col = torch.tensor(col, dtype=int)
     return dglsp.spmatrix(torch.vstack([_row, _col]))
+
+def xcollate_fn(data):
+    xs, ys, graphs = map(list, zip(*data))
+    graph_batch = dgl.batch(graphs)
+    return torch.cat(xs, dim=0), torch.cat(ys, dim=0), graph_batch
+
+
+class CustomDataset(Dataset):
+    def __init__(self, xs, ys, graphs):
+        self.xs = xs
+        self.ys = ys
+        self.graphs = graphs
+        self.size = len(xs)
+    
+    def __len__(self):
+        return self.size
+    
+    def __getitem__(self, idx):
+        # 반환값 : (a, b)
+        # a : idx에 해당하는 인덱스만 1이고 나머지는 0인 크기 (1, 8)짜리 one-hot vector
+        # b : idx
+        return self.xs[idx], self.ys[idx], self.graphs[idx]

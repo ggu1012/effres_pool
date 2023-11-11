@@ -6,5 +6,7 @@ eff_res_plot
 graph
 dataset
 .vscode
+runs
+results
 *.ipynb
 *.csv

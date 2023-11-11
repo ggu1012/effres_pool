@@ -5,7 +5,8 @@ import numpy as np
 import dgl
 import torch
 from scipy.sparse import csc_array
-
+import dgl.sparse as dglsp
+from typing import List
 
 def StarW(hinc: list, W: list):
     num_nodes = 0
@@ -115,50 +116,39 @@ def ExpanderCliqueW(
     return A
 
 
-def driver2load(obj):
-    num_nodes = (
-        obj["db_place_info"]["num_movable_nodes"]
-        + obj["db_place_info"]["num_terminals"]
-        + obj["db_place_info"]["num_terminal_NIs"]
-    )
+def driver2load(H, obj, new_node_mapper):
+    num_nodes, num_nets = H.shape
+    net2node = [[] for _ in range(num_nets)]
+    net_out = -1 * np.ones(num_nets, dtype=int)
+    pin_direction = obj['pin_info']['pin_direct']
 
-    pin2node = obj["pin_info"]["pin2node_map"]
-    pin2net = obj["pin_info"]["pin2net_map"]
-    pin_direction = obj["pin_info"]["pin_direct"]
+    indptr = H.indptr
+    indices = H.indices
 
-    net_num = max(pin2net) + 1
-    net2node = [[] for _ in range(net_num)]
-    net_out = -1 * np.ones(net_num, dtype=int)
-
-    for pin in range(len(pin2node)):
-        v = pin2node[pin]
-        e = pin2net[pin]
-        dir = pin_direction[pin]
-        net2node[e].append(v)
-        if dir == b"OUTPUT":
-            net_out[e] = v
-    no_out_net = np.nonzero(net_out == -1)[0]
-    net_mapid = np.delete(np.arange(net_num), no_out_net)
-    net2node = np.array([list(set(x)) for x in net2node], dtype=object)
-
-    rev_netmap = {}
-    for i, x in enumerate(net_mapid):
-        rev_netmap[x] = i
-
-    net2node = np.delete(net2node, no_out_net).tolist()
-    net_out = np.delete(net_out, no_out_net)
+    for i in range(len(indptr) - 1):
+        nodes = indices[indptr[i]:indptr[i+1]]
+        for v in nodes:
+            net2node[i].append(v)
+            dir = pin_direction[new_node_mapper[v]]
+            if dir == b"OUTPUT":
+                net_out[i] = v
 
     row = []
     col = []
     src_dst = {}
+
+    colptrx = 0
+    colptr = []
+    colidx = []
     for i, net in enumerate(net2node):
-        dsts = np.delete(net, np.nonzero(net == net_out[i])[0])
-        src_dst[net_mapid[i]] = (net_out[i], dsts)
-        row += [net_out[i] for _ in range(len(net) - 1)]
-        col += dsts.tolist()
+        # dsts = np.delete(net, np.nonzero(net == net_out[i])[0])
+        src_dst[i] = (net_out[i], net)
+        colptr.append(colptrx)
+        colidx += net
+        colptrx += len(net)
 
     A = csr_array((np.ones(len(row), dtype=int), (row, col)), (num_nodes, num_nodes))
-    return A + A.T, src_dst, no_out_net
+    return A + A.T, src_dst
 
 
 def star_hetero(H):
@@ -190,3 +180,28 @@ def star_hetero(H):
             ),
         }
     )
+
+def multi_level_expander_graph(H: dglsp.SparseMatrix, net2nodes: list, assignment_mats: List[dglsp.SparseMatrix], expander_sz=3, device='cpu'):
+
+    ## Build uniform 3-cycle expander graph from net2node list (incidence matrix)
+
+    assert len(net2nodes) == len(assignment_mats) + 1
+
+    data_dict = {}
+    for lv, n2n in enumerate(net2nodes):
+        key = (f'lv{lv}', 'to', f'lv{lv}')
+        adj = ExpanderCliqueW(hinc=n2n, expander_sz=expander_sz)
+        indptr = torch.tensor(adj.indptr, dtype=int)
+        indices = torch.tensor(adj.indices, dtype=int)
+        data_dict[key] = ('csr', (indptr, indices, []))
+    
+    for lv in range(len(net2nodes) - 1):
+        data_dict[(f'lv{lv}', 'downwards', f'lv{lv+1}')] = \
+                ('csr', (assignment_mats[lv].T.csr()))
+        data_dict[(f'lv{lv+1}', 'upwards', f'lv{lv}')] = \
+                ('csr', (assignment_mats[lv].csr()))
+    
+    data_dict[('lv0', 'conn', 'net')] = ('csr', H.csr())
+    gr = dgl.heterograph(data_dict).to(device)
+    
+    return gr
