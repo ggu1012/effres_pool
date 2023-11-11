@@ -48,11 +48,8 @@ def pklz_to_incmat(pkl):
     net2node = []
     for i in range(len(indptr) - 1):
         net = indptr[i]
-        if net in singleton_edge_idx:
-            continue
-        else:
-            nodes = indices[indptr[i]:indptr[i+1]]
-            net2node.append(list(nodes))
+        nodes = indices[indptr[i]:indptr[i+1]]
+        net2node.append(list(nodes))
     return H, net2node, new_net_mapper, new_node_mapper
 
 def lil_to_dglsp(lil: list):

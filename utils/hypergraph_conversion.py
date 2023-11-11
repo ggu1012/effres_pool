@@ -6,6 +6,7 @@ import dgl
 import torch
 from scipy.sparse import csc_array
 
+
 def StarW(hinc: list, W: list):
     num_nodes = 0
     for x in hinc:
@@ -58,12 +59,16 @@ def FullCliqueW(hinc: list, W: list):
 
 
 def ExpanderCliqueW(
-    hinc: list, W: list, expander_sz: int
-):  # expander_sz=1 for 3-edge cycles
+    hinc: list, expander_sz: int, random_seed: int = 54321, W: list | int = -1
+) -> csr_array:  # expander_sz=1 for 3-edge cycles
+    
+    if W == -1:
+        W = np.ones(len(hinc))
+
     src = []
     dst = []
     wts = []
-    rng = np.random.default_rng(462346234)
+    rng = np.random.default_rng(random_seed)
 
     for eid, hedge in enumerate(hinc):
         hsz = len(hedge)
@@ -106,7 +111,6 @@ def ExpanderCliqueW(
     num_nodes += 1
 
     A = csr_array((wts, (src, dst)), shape=(num_nodes, num_nodes))
-    # A = csr_array((wts, (src, dst)), shape=(num_nodes + len(hinc), num_nodes + len(hinc)))
 
     return A
 
@@ -156,8 +160,8 @@ def driver2load(obj):
     A = csr_array((np.ones(len(row), dtype=int), (row, col)), (num_nodes, num_nodes))
     return A + A.T, src_dst, no_out_net
 
+
 def star_hetero(H):
-    
     ##          (net-to-node)
     ##    [ 0       H.T
     ##      H        0 ]
@@ -168,10 +172,21 @@ def star_hetero(H):
 
     return dgl.heterograph(
         {
-            ('node', 'to', 'net'): ('csc', (torch.tensor(A_node2net.indptr, dtype=int), torch.tensor(A_node2net.indices, dtype=int), [])), 
-            ('net', 'to', 'node'): ('csr', (torch.tensor(A_net2node.indptr, dtype=int), torch.tensor(A_net2node.indices, dtype=int), []))
+            ("node", "to", "net"): (
+                "csc",
+                (
+                    torch.tensor(A_node2net.indptr, dtype=int),
+                    torch.tensor(A_node2net.indices, dtype=int),
+                    [],
+                ),
+            ),
+            ("net", "to", "node"): (
+                "csr",
+                (
+                    torch.tensor(A_net2node.indptr, dtype=int),
+                    torch.tensor(A_net2node.indices, dtype=int),
+                    [],
+                ),
+            ),
         }
     )
-
-
-

@@ -3,6 +3,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+"""
+DEPRECATED!
+
+Too much memory usage for generating hypergraph laplacian
+--> Mainly being a problem for backward pass
+
+"""
+
+
 
 class HGNN(nn.Module):
     def __init__(self, Hs, ASMs, in_dim, hidden_dims, out_dim, device='cpu'):
@@ -68,10 +77,9 @@ class HGNN(nn.Module):
             B = dglsp.identity((n_edges, n_edges)).to(device)
             # Compute Laplacian from the equation above.
             x = D_v_invsqrt @ H
-            x = x @ B
-            x = x @ D_e_inv
-            y = H.transpose() @ D_v_invsqrt
-            L = x @ y
+            y = B @ D_e_inv
+            z = H.transpose() @ D_v_invsqrt
+            L = x @ (y @ z)
             self.Ls.append(L)
 
         print(f"Ls shape: {[x.shape for x in self.Ls]}")

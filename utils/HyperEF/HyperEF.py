@@ -8,7 +8,7 @@ import sys
 import os
 
 
-def HyperEF(hinc: list, mainL: int = 3, subL :int = 3, R :float = 0.5):
+def HyperEF(hinc: list, mainL: int = 3, subL :int = 3, R :float = 0.5, seed=12345):
     """
     L: # of loops for coarsening
     R: Effective resistance threshold for coarsening 
@@ -16,6 +16,8 @@ def HyperEF(hinc: list, mainL: int = 3, subL :int = 3, R :float = 0.5):
     # get num nodes
     num_nodes = get_num_nodes(hinc)
     Neff = np.zeros(num_nodes, dtype=float)
+
+    rng = np.random.default_rng(seed)
 
     main_idx_mats = []
     main_hinc_news = []
@@ -46,7 +48,7 @@ def HyperEF(hinc: list, mainL: int = 3, subL :int = 3, R :float = 0.5):
             SV = np.zeros((num_nodes, num_vecs), dtype=float)
 
             for ii in range(num_rand_vecs):
-                rand_vec = (np.random.rand(A.shape[0]) - 0.5) * 2
+                rand_vec = (rng.random(A.shape[0]) - 0.5) * 2
                 sm = Filter(rand_vec, gram_schmidt_iter, adj_mat, num_nodes, interval, num_vecs)
                 SV[:, ii * num_filtered_vecs: (ii+1) * num_filtered_vecs] = sm
 
