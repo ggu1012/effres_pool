@@ -152,12 +152,10 @@ for epoch in range(100):
         losses = []
         for i, (x, y, gr) in enumerate(dataloaders[1]):
             gr, x, y = gr.to(device), x.to(device), y.to(device)
-            print(x)
             with torch.no_grad():
                 Y = model(gr, x)
             Y = Y.flatten()
             loss = F.smooth_l1_loss(Y, y)
-            print(i, loss)
             losses.append(loss)
             torch.save(y.detach().cpu(), f'results/val_m{main_level}.s{sub_level}_e{epoch+1}_b{i}.gt.pt')
             torch.save(Y.detach().cpu(), f'results/val_m{main_level}.s{sub_level}_e{epoch+1}_b{i}.result.pt')
