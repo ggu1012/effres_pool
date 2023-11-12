@@ -64,6 +64,6 @@ class VaGNN(nn.Module):
         xx = torch.cat([sg.ndata['y_max'].pop('net'), sg.ndata['y_min'].pop('net')], dim=1)
         for i in range(len(self.mlp)):
             xx = self.mlp[i](xx)
-            xx = F.relu(xx)
+            xx = F.tanh(xx)
             xx = self.dropout(xx)
         return xx

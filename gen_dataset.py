@@ -1,4 +1,5 @@
 import torch
+
 # import dgl
 import numpy as np
 import gzip
@@ -13,7 +14,8 @@ import torch.nn.functional as F
 from utils.hypergraph_conversion import *
 from utils.functions import *
 
-def HPWL(pklz_, new_net_mapper, dir="dataset/y_HPWL", num_labels = 10, labeled = True):
+
+def HPWL(pklz_, new_net_mapper, dir="dataset/y_HPWL", num_labels=10, labeled=True):
     dset_name = pklz_[0]
     pklz = pklz_[1]
     dset_parse = re.match(
@@ -52,25 +54,26 @@ def HPWL(pklz_, new_net_mapper, dir="dataset/y_HPWL", num_labels = 10, labeled =
         hpwl_collection.append((amax - amin).sum())
     hpwl_collection = torch.tensor(hpwl_collection)
 
-    #total_info = torch.vstack([hpwl_collection, label]).T
+    # total_info = torch.vstack([hpwl_collection, label]).T
 
     if labeled:
         logged = torch.log10(hpwl_collection)
         bins = torch.histogram(logged, bins=num_labels)[1]
-        ground_truth = (torch.bucketize(logged, bins, right=True) - 1)
+        ground_truth = torch.bucketize(logged, bins, right=True) - 1
         ground_truth[ground_truth == num_labels] = num_labels - 1
-        
+
         torch.save(
             ground_truth, os.path.join(dir, f"{top}_{core_util}_{core_aspect}_label.pt")
         )
 
     else:
         torch.save(
-            hpwl_collection, os.path.join(dir, f"{top}_{core_util}_{core_aspect}_raw.pt")
+            hpwl_collection,
+            os.path.join(dir, f"{top}_{core_util}_{core_aspect}_raw.pt"),
         )
 
-    
     return len(hpwl_collection)
+
 
 def node_feature(H, pklz_, dtl_A, src_dst, node_mapper, dir="dataset/x_node_feature"):
     ## node feature
@@ -107,6 +110,63 @@ def node_feature(H, pklz_, dtl_A, src_dst, node_mapper, dir="dataset/x_node_feat
 
     num_fanin = dtl_A.sum(axis=0) - num_fanout
 
+    ## node name to hierarchy map
+    node_name2id_map = pklz["node_info"]["node_name2id_map"]
+    rev_node_name_map = dict(
+        zip(list(node_name2id_map.values()), list(node_name2id_map.keys()))
+    )
+    hier = []
+    hier_cell_list = {}
+    for idx, nid in enumerate(node_mapper):
+        node_name = rev_node_name_map[nid]
+        if "/" in node_name:  # hierarchy
+            hier_map = []
+            hier_tree = node_name.split("/")[:-1]  # ignore last cell
+            for lv, h in enumerate(hier_tree):
+                if lv not in hier_cell_list.keys():
+                    hier_cell_list.setdefault(lv, []).append(h)
+                    hier_map.append(1)
+                else:
+                    if h in hier_cell_list[lv]:
+                        idx = hier_cell_list[lv].index(h)
+                        hier_map.append(idx + 1)
+                    else:
+                        hier_cell_list[lv].append(h)
+                        hier_map.append(1)
+            hier.append(hier_map)
+        else:
+            hier.append([0])
+
+    vecs = hier
+    nt = torch.nested.nested_tensor(vecs)
+    final_hier_vec = torch.nested.to_padded_tensor(nt, -1)
+
+    if final_hier_vec.shape[1] < 3:
+        final_hier_vec = torch.cat(
+            [
+                final_hier_vec,
+                torch.full((final_hier_vec.shape[0], 3 - final_hier_vec.shape[1]), -1),
+            ], dim=1
+        )
+    elif final_hier_vec.shape[1] > 3:
+        final_hier_vec = final_hier_vec[:, :3]
+
+    nd_size_x = (nd_size_x - np.min(nd_size_x)) / (
+        np.max(nd_size_x) - np.min(nd_size_x)
+    )
+    nd_size_y = (nd_size_y - np.min(nd_size_y)) / (
+        np.max(nd_size_y) - np.min(nd_size_y)
+    )
+    node_degree = (node_degree - np.min(node_degree)) / (
+        np.max(node_degree) - np.min(node_degree)
+    )
+    num_fanin = (num_fanin - np.min(num_fanin)) / (
+        np.max(num_fanin) - np.min(num_fanin)
+    )
+    num_fanout = (num_fanout - np.min(num_fanout)) / (
+        np.max(num_fanout) - np.min(num_fanout)
+    )
+
     collection = torch.vstack(
         [
             torch.tensor(nd_size_x),
@@ -118,11 +178,13 @@ def node_feature(H, pklz_, dtl_A, src_dst, node_mapper, dir="dataset/x_node_feat
     )
 
     nfeat_collection = collection.T
+    nfeat_collection = torch.cat([nfeat_collection, final_hier_vec], dim=1)
     torch.save(
         nfeat_collection, os.path.join(dir, f"{top}_{core_util}_{core_aspect}.pt")
     )
 
     return nfeat_collection.shape
+
 
 @ray.remote
 def generate_dataset(dsets):
@@ -137,25 +199,24 @@ def generate_dataset(dsets):
 
     return dname
 
+
 if __name__ == "__main__":
-    dset_dirs = glob('../DREAMPlace/install/dataset/*')
+    dset_dirs = glob("../DREAMPlace/install/dataset/*")
     dset_files = []
     for dset_dir in dset_dirs:
         dset_name = os.path.basename(dset_dir)
-        dset_files += glob(f'../DREAMPlace/install/dataset/{dset_name}/*.icc2.pklz')
+        dset_files += glob(f"../DREAMPlace/install/dataset/{dset_name}/*.icc2.pklz")
     random.shuffle(dset_files)
 
     dset_file_split = []
     files_per_chunk = 10
     th_num = round(len(dset_files) / files_per_chunk)
     for t in range(th_num - 1):
-        dset_file_split.append(dset_files[t:files_per_chunk*(t+1)])
-    dset_file_split[-1] += dset_files[files_per_chunk*t:]
+        dset_file_split.append(dset_files[t : files_per_chunk * (t + 1)])
+    dset_file_split[-1] += dset_files[files_per_chunk * t :]
 
     # for x in dset_file_split:
-    #     print(x)
     #     generate_dataset(x)
-
 
     ray.init()
     job_list = [generate_dataset.remote(x) for x in dset_file_split]

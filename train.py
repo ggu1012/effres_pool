@@ -25,6 +25,7 @@ main_level = 2
 sub_level = 2
 tail = 2
 num_labels = 10
+mode = 'label'
 val_set = ['ariane', 'RocketTile']
 test_set = ['bsg_chip']
 device = 'cuda:0'
@@ -53,14 +54,14 @@ device = 'cuda:0'
 # exit()
 
 
+gnn_dims = [8, 64, 256, 256, 64, 32]
+tail_dims = [32, 128, 64, 8]
+mlp_dims = [8, 128, 16, 1] 
 
-gnn_dims = [5, 64, 256, 256, 64, 32]
-mlp_dims = [32, 64, 64, 1]
 assert len(gnn_dims) == 2 * main_level + 2
 
-
-# dataset_files = glob(f'dataset/x_node_feature/*.pt')
 dataset_files = glob(f'dataset/y_HPWL/*_raw.pt')
+mlp_dims += [1]
 
 train_dataset = []
 val_dataset = []
@@ -75,7 +76,7 @@ for i, ds in enumerate(dataset_files):
         train_dataset.append(ds)
 
 dataloaders = []
-batch_sizes = [4, 4, 2]
+batch_sizes = [8, 8, 2]
 for i, mode in enumerate([train_dataset, val_dataset, test_dataset]):
     xs = []
     ys = []
@@ -110,8 +111,10 @@ for i, mode in enumerate([train_dataset, val_dataset, test_dataset]):
 
         ## HPWL MOD
         y = torch.load(f'dataset/y_HPWL/{basen}').to(torch.float)
-        y = y / y.sum()
         y = torch.log10(y)
+        _max = y.max()
+        _min = y.min()
+        y = (((y - _min) / (_max - _min)) -0.5) * 2 # -1 ~ 1
         ##
 
         xs.append(x)
@@ -121,12 +124,14 @@ for i, mode in enumerate([train_dataset, val_dataset, test_dataset]):
     dataloaders.append(GraphDataLoader(tmp, batch_size = batch_sizes[i], shuffle= True, collate_fn=xcollate_fn))
 
 print("Initialize model")
-# model = EXGNN(gnn_dims, mlp_dims, main_level, device)
-model = VaGNN(gnn_dims, mlp_dims, device)
-optimizer = torch.optim.SGD(model.parameters(), lr = 1e-5)
+loss_fn = nn.MSELoss()
+# loss_fn = nn.SmoothL1Loss()
+model = EXGNN(gnn_dims,  mlp_dims, tail_dims, main_level, device)
+# model = VaGNN(gnn_dims, mlp_dims, device)
+optimizer = torch.optim.SGD(model.parameters(), lr = 5e-2)
 
 # dataloaders = [train, val, test]
-for epoch in range(100):
+for epoch in range(300):
     total_loss = 0
 
     ## Train
@@ -136,8 +141,7 @@ for epoch in range(100):
         x,y,gr = x.to(device),y.to(device),gr.to(device)
         Y = model(gr, x)
         Y = Y.flatten()
-        loss = F.smooth_l1_loss(Y, y)
-
+        loss = loss_fn(Y, y)
         optimizer.zero_grad()
         loss.backward()
         losses.append(loss.item())
@@ -155,7 +159,7 @@ for epoch in range(100):
             with torch.no_grad():
                 Y = model(gr, x)
             Y = Y.flatten()
-            loss = F.smooth_l1_loss(Y, y)
+            loss = loss_fn(Y, y)
             losses.append(loss)
             torch.save(y.detach().cpu(), f'results/val_m{main_level}.s{sub_level}_e{epoch+1}_b{i}.gt.pt')
             torch.save(Y.detach().cpu(), f'results/val_m{main_level}.s{sub_level}_e{epoch+1}_b{i}.result.pt')
@@ -172,7 +176,7 @@ for i, (x, y, gr) in enumerate(dataloaders[2]):
     with torch.no_grad():
         Y = model(gr, x)
     Y = Y.flatten()
-    loss = F.mse_loss(Y, y)
+    loss = loss_fn(Y, y)
     losses.append(loss)
     torch.save(y.detach().cpu(), f'results/test_{top}.m{main_level}.s{sub_level}_b{i}.gt.pt')
     torch.save(Y.detach().cpu(), f'results/test_{top}.m{main_level}.s{sub_level}_b{i}.result.pt')

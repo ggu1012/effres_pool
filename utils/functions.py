@@ -110,3 +110,4 @@ class CustomDataset(Dataset):
         # a : idx에 해당하는 인덱스만 1이고 나머지는 0인 크기 (1, 8)짜리 one-hot vector
         # b : idx
         return self.xs[idx], self.ys[idx], self.graphs[idx]
+    
