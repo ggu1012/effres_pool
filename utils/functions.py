@@ -24,7 +24,6 @@ def pklz_to_incmat(pkl):
 
     # init hypergraph incidence matrix
     H = csc_array((np.ones(len(pin2net)), (pin2node, pin2net)))
-
     # find and remove singleton edge
     e_deg = H.sum(axis=0).flatten()
     singleton_edge_idx = np.nonzero(e_deg <= 1)[0]
@@ -48,7 +47,10 @@ def pklz_to_incmat(pkl):
     remove_net_idx = np.union1d(no_out_net_idx, singleton_edge_idx)
 
     # remove singleton hedge in inc mat
-    new_net_mapper = np.delete(np.arange(H.shape[1]), remove_net_idx)
+    if len(remove_net_idx) > 0:
+        new_net_mapper = np.delete(np.arange(H.shape[1]), remove_net_idx)
+    else:
+        new_net_mapper = np.arange(H.shape[1])
     H = H[:, np.array(new_net_mapper)]
 
     void_node = np.nonzero(H.sum(axis=1) == 0)[0]

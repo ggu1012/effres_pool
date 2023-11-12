@@ -11,7 +11,7 @@ from utils.hypergraph_conversion import *
 from utils.functions import *
 
 ####
-main_level = 2
+main_level = 1
 tail = 2
 device = 'cuda:0'
 top = 'bsg_chip'

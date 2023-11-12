@@ -112,41 +112,48 @@ def ExpanderCliqueW(
     num_nodes += 1
 
     A = csr_array((wts, (src, dst)), shape=(num_nodes, num_nodes))
-
+    A = A + A.T
     return A
 
 
-def driver2load(H, obj, new_node_mapper):
+def driver2load(H, obj, new_node_mapper, new_net_mapper):
     num_nodes, num_nets = H.shape
     net2node = [[] for _ in range(num_nets)]
+
     net_out = -1 * np.ones(num_nets, dtype=int)
+    pin2net = obj["pin_info"]["pin2net_map"]
+    pin2node = obj["pin_info"]["pin2node_map"]
     pin_direction = obj['pin_info']['pin_direct']
 
-    indptr = H.indptr
-    indices = H.indices
+    rev_net_mapper = {}
+    for i, nd in enumerate(new_net_mapper):
+        rev_net_mapper[nd] = i
+    rev_node_mapper = {}
+    for i, nd in enumerate(new_node_mapper):
+        rev_node_mapper[nd] = i
 
-    for i in range(len(indptr) - 1):
-        nodes = indices[indptr[i]:indptr[i+1]]
-        for v in nodes:
-            net2node[i].append(v)
-            dir = pin_direction[new_node_mapper[v]]
-            if dir == b"OUTPUT":
-                net_out[i] = v
+    for pin in range(len(pin2node)):
+        v = pin2node[pin]
+        e = pin2net[pin]
+        if v not in rev_node_mapper.keys() \
+            or e not in rev_net_mapper.keys():
+            continue
+        dir = pin_direction[pin]
+        new_e = rev_net_mapper[e]
+        new_v = rev_node_mapper[v]
+        net2node[new_e].append(new_v)
+        if dir == b"OUTPUT":
+            net_out[new_e] = new_v
+
+    src_dst = {}
 
     row = []
     col = []
-    src_dst = {}
-
-    colptrx = 0
-    colptr = []
-    colidx = []
     for i, net in enumerate(net2node):
-        # dsts = np.delete(net, np.nonzero(net == net_out[i])[0])
-        src_dst[i] = (net_out[i], net)
-        colptr.append(colptrx)
-        colidx += net
-        colptrx += len(net)
-
+        dsts = np.delete(net, np.nonzero(net == net_out[i])[0])
+        src_dst[i] = (net_out[i], dsts.tolist())
+        row += [net_out[i] for _ in range(len(dsts))]
+        col += dsts.tolist()
     A = csr_array((np.ones(len(row), dtype=int), (row, col)), (num_nodes, num_nodes))
     return A + A.T, src_dst
 

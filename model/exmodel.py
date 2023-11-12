@@ -5,8 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import dgl.function as fn
 import dgl.nn.pytorch as dglnn
-
-from utils.hypergraph_conversion import ExpanderCliqueW
+from torch.nn import BatchNorm1d
 
 """
 Utilize 3-cycle uniform expander graph converted from hypergraph
@@ -29,16 +28,24 @@ class EXGNN(nn.Module):
         self.pool_level = pool_level
 
         floor_step = [
-            dglnn.SAGEConv(gnn_dims[i], gnn_dims[i + 1], "mean", feat_drop=0.5).to(device)
+            dglnn.GATConv(gnn_dims[i], gnn_dims[i + 1], num_heads=1, feat_drop=0.5).to(
+                device
+            )
+            # dglnn.SAGEConv(gnn_dims[i], gnn_dims[i + 1], "mean", feat_drop=0.5).to(device)
             for i in range(self.pool_level + 1)
         ] + [
-            # dglnn.SAGEConv(gnn_dims[i], gnn_dims[i+1], 'mean', feat_drop=0.5).to(device)
-            dglnn.SAGEConv(
+            dglnn.GATConv(
                 gnn_dims[i] + gnn_dims[2 * self.pool_level + 1 - i],
                 gnn_dims[i + 1],
-                "mean",
-                feat_drop=0.3,
+                num_heads=1,
+                feat_drop=0.5,
             ).to(device)
+            # dglnn.SAGEConv(
+            #     gnn_dims[i] + gnn_dims[2 * self.pool_level + 1 - i],
+            #     gnn_dims[i + 1],
+            #     "mean",
+            #     feat_drop=0.5,
+            # ).to(device)
             for i in range(self.pool_level + 1, 2 * self.pool_level + 1)
         ]
 
@@ -48,18 +55,18 @@ class EXGNN(nn.Module):
 
         mlp = [nn.Linear(gnn_dims[-1], mlp_dims[0]).to(device)]
         mlp += [
-            nn.Linear(mlp_dims[i], mlp_dims[i+1]).to(device)
+            nn.Linear(mlp_dims[i], mlp_dims[i + 1]).to(device)
             for i in range(len(mlp_dims) - 1)
         ]
         self.mlp = nn.ModuleList(mlp)
 
         print(self.mlp)
-        
+
         self.dropout = nn.Dropout(0.5).to(device)
 
     def forward(self, gr, X):
-        gr.ndata['x'] = {'lv0': X }
-        
+        gr.ndata["x"] = {"lv0": X}
+
         # Goes down
         #   GNN
         # o ----
@@ -105,11 +112,11 @@ class EXGNN(nn.Module):
             sg.ndata["x"] = xx
 
         # message passing to net node
-        sg = dgl.edge_type_subgraph(gr, ['conn'])
-        sg.update_all(fn.copy_u('x', 'm'), fn.sum('m', 'y_pred'))
-        xx = sg.ndata['y_pred'].pop('net')
+        sg = dgl.edge_type_subgraph(gr, ["conn"])
+        sg.update_all(fn.copy_u("x", "m"), fn.sum("m", "y_pred"))
+        xx = sg.ndata["y_pred"].pop("net")
         for i in range(len(self.mlp)):
             xx = self.mlp[i](xx)
-            xx = self.dropout(xx)
             xx = F.relu(xx)
+            xx = self.dropout(xx)
         return xx

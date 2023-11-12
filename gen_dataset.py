@@ -131,9 +131,9 @@ def generate_dataset(dsets):
             obj = pickle.load(f)
 
         H, net2node, new_net_mapper, new_node_mapper = pklz_to_incmat(obj)
-        dtl_A, src_dst = driver2load(H, obj, new_node_mapper)
-        yy = HPWL((dname, obj), new_net_mapper, labeled=True)
-        # xx = node_feature(H, (dname, obj), dtl_A, src_dst, new_node_mapper)
+        dtl_A, src_dst = driver2load(H, obj, new_node_mapper, new_net_mapper)
+        # yy = HPWL((dname, obj), new_net_mapper, labeled=True)
+        xx = node_feature(H, (dname, obj), dtl_A, src_dst, new_node_mapper)
 
     return dname
 
@@ -151,6 +151,11 @@ if __name__ == "__main__":
     for t in range(th_num - 1):
         dset_file_split.append(dset_files[t:files_per_chunk*(t+1)])
     dset_file_split[-1] += dset_files[files_per_chunk*t:]
+
+    # for x in dset_file_split:
+    #     print(x)
+    #     generate_dataset(x)
+
 
     ray.init()
     job_list = [generate_dataset.remote(x) for x in dset_file_split]
