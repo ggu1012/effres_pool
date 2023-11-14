@@ -4,13 +4,14 @@ import pickle
 import os
 from torch import nn
 import torch.nn.functional as F
+import ray
 from dgl.dataloading import GraphDataLoader
 from glob import glob
 import re
 # from torch.profiler import profile, record_function, ProfilerActivity
 from torch.autograd.profiler import profile
 from torch.utils.tensorboard import SummaryWriter
-writer = SummaryWriter()
+
 
 # from model.hmodel import HGNN
 from model.exmodel import EXGNN
@@ -24,39 +25,65 @@ from utils.functions import *
 main_level = 2
 sub_level = 2
 tail = 2
-num_labels = 10
-mode = 'label'
+num_labels = 20
+labeled = False
 val_set = ['jpeg_encoder', 'RocketTile']
 test_set = ['bsg_chip']
 device = 'cuda:0'
 ################
 
+@ray.remote
+def get_dataset_xy(dataset):
+    basen = os.path.basename(dataset)
+    rem = re.match(r'(.*)_(.*)_(.*)_.*\.pt$', basen)
+    top, cu, ca = rem.group(1), rem.group(2), rem.group(3)
+    graph_fn = f'graph/dgl/{top}_{cu}_{ca}.bin'
+    chunkname = f'graph/pre_process/{top}_{cu}_{ca}.m{main_level}.s{sub_level}.pkl'
+    with gzip.open(chunkname, 'rb') as f:
+        Hs, idx_mat, net2nodes, net_map, node_map = pickle.load(f)
 
-# top = 'mempool_tile_wrap'
-# cu, ca = 0.7, 1.0
-# with gzip.open(f'../DREAMPlace/install/dataset/{top}/{top}_{cu}_{ca}.icc2.pklz') as f:
-#     dataset = pickle.load(f)
-# H, net2node, net_map, node_map = pklz_to_incmat(dataset)
-# print(f"Top: {top}, #Nodes: {H.shape[0]}, #Edges: {H.shape[1]}")
-# chunkname = f'graph/pre_process/{top}_{cu}_{ca}.m{main_level}.s{sub_level}.pkl'
+    if not os.path.exists(graph_fn):
+        with gzip.open(f'../DREAMPlace/install/dataset/{top}/{top}_{cu}_{ca}.icc2.pklz') as f:
+            dataset = pickle.load(f)
 
-# with gzip.open(chunkname, 'rb') as f:
-#     Hs, idx_mat, net2nodes, net_map, node_map = pickle.load(f)
+        rows = idx_mat
+        cols = [np.arange(len(x)) for x in idx_mat]
+        ASMs = [coo_to_dglsp(rows[i], cols[i]) for i in range(len(idx_mat))] # ASM.shape = (num_clusters, num_nodes)
 
-# rows = idx_mat
-# cols = [np.arange(len(x)) for x in idx_mat]
-# ASMs = [coo_to_dglsp(rows[i], cols[i]) for i in range(len(idx_mat))] # ASM.shape = (num_clusters, num_nodes)
+        gr = multi_level_expander_graph(net2nodes, ASMs, 3, 'cpu')        
+        dgl.save_graphs(graph_fn, [gr])
+    else:
+        gr = dgl.load_graphs(graph_fn)[0][0].to('cpu')
 
-# xxxx = ExpanderCliqueW(net2node, 3, 54321)
-# print(dgl.to_bidirected(dgl.graph(('csr', (xxxx.indptr, xxxx.indices, [])))))
-# # gr = multi_level_expander_graph(lil_to_dglsp(net2node), net2nodes, ASMs, 3, 'cpu') 
+    x = torch.load(f'dataset/x_node_feature/{top}_{cu}_{ca}.pt').to(torch.float) # already cut-off
+    # x = torch.rand((gr.num_nodes('lv0'), 5), dtype=torch.float)
 
-# exit()
+    ## HPWL MOD
+    y = torch.load(f'dataset/y_HPWL/{basen}').to(torch.float)[net_map]
+    y = torch.log10(y)
 
+    if labeled == True:
+        bins = torch.histogram(y, bins=num_labels)[1]
+        y = torch.bucketize(y, bins, right=True) - 1
+        y[y == num_labels] = num_labels - 1
+    else:
+        # y = y - y.min() # 0 ~
+        # y = y - y.max() # ~ 0
+        _max = y.max()
+        _min = y.min()
+        # y = (((y - _min) / (_max - _min)) -0.5) * 2 # -1 ~ 1
+        y = ((y - _min) / (_max - _min)) # 0 ~ 1
+    ##
+
+    return x, y, gr
+
+if labeled == True:
+    print("Running with LABELED HPWL")
 
 gnn_dims = [8, 64, 256, 256, 64, 32]
-tail_dims = [32, 16]
-mlp_dims = [16, 64, 1] 
+tail_dims = -1
+mlp_dims = [32, 64]
+mlp_dims += [num_labels] if labeled == True else [1]
 
 assert len(gnn_dims) == 2 * main_level + 2
 
@@ -64,6 +91,8 @@ dataset_files = glob(f'dataset/y_HPWL/*_raw.pt')
 train_dataset = []
 val_dataset = []
 test_dataset = []
+
+ray.init(num_cpus=24)
 
 for i, ds in enumerate(dataset_files):
     if re.match(f'.*({"|".join(val_set)}).*', ds):
@@ -83,56 +112,22 @@ model = EXGNN(gnn_dims,  mlp_dims, tail_dims, main_level, device)
 
 optimizer = torch.optim.SGD(model.parameters(), lr = 1e-3, weight_decay=5e-2)
 
-
 dataloaders = []
-batch_sizes = [1, 1, 1]
-for i, mode in enumerate([train_dataset, val_dataset, test_dataset]):
+batch_sizes = [4, 1, 1]
+for i, m_dataset in enumerate([train_dataset, val_dataset, test_dataset]):
     xs = []
     ys = []
     graphs = []
-    for dataset in mode:
-        basen = os.path.basename(dataset)
-        rem = re.match(r'(.*)_(.*)_(.*)_.*\.pt$', basen)
-        top, cu, ca = rem.group(1), rem.group(2), rem.group(3)
-        graph_fn = f'graph/dgl/{top}_{cu}_{ca}.bin'
-        chunkname = f'graph/pre_process/{top}_{cu}_{ca}.m{main_level}.s{sub_level}.pkl'
-        with gzip.open(chunkname, 'rb') as f:
-            Hs, idx_mat, net2nodes, net_map, node_map = pickle.load(f)
-
-        if not os.path.exists(graph_fn):
-            with gzip.open(f'../DREAMPlace/install/dataset/{top}/{top}_{cu}_{ca}.icc2.pklz') as f:
-                dataset = pickle.load(f)
-
-            rows = idx_mat
-            cols = [np.arange(len(x)) for x in idx_mat]
-            ASMs = [coo_to_dglsp(rows[i], cols[i]) for i in range(len(idx_mat))] # ASM.shape = (num_clusters, num_nodes)
-
-            gr = multi_level_expander_graph(net2nodes, ASMs, 3, 'cpu')        
-            dgl.save_graphs(graph_fn, [gr])
-        else:
-            gr = dgl.load_graphs(graph_fn)[0][0].to('cpu')
-
-        x = torch.load(f'dataset/x_node_feature/{top}_{cu}_{ca}.pt').to(torch.float) # already cut-off
-        # x = torch.rand((gr.num_nodes('lv0'), 5), dtype=torch.float)
-
-        ## HPWL MOD
-        y = torch.load(f'dataset/y_HPWL/{basen}').to(torch.float)[net_map]
-        y = torch.log10(y)
-        # y = y - y.min() # 0 ~
-        # y = y - y.max() # ~ 0
-        _max = y.max()
-        _min = y.min()
-        # y = (((y - _min) / (_max - _min)) -0.5) * 2 # -1 ~ 1
-        y = ((y - _min) / (_max - _min)) # 0 ~ 1
-
-        ##
-
+    jobs = [get_dataset_xy.remote(x) for x in m_dataset]
+    chunk = ray.get(jobs)
+    for x, y, gr in chunk:   
         xs.append(x)
         ys.append(y)
         graphs.append(gr)
     tmp = CustomDataset(xs, ys, graphs)
     dataloaders.append(GraphDataLoader(tmp, batch_size = batch_sizes[i], shuffle= True, collate_fn=xcollate_fn))
 
+writer = SummaryWriter()
 
 # dataloaders = [train, val, test]
 for epoch in range(300):
@@ -144,15 +139,20 @@ for epoch in range(300):
     for x, y, gr in dataloaders[0]:
         x,y,gr = x.to(device),y.to(device),gr.to(device)
         Y = model(gr, x)
-        Y = Y.flatten()
-        loss = loss_fn(Y, y)
+        if labeled == True:
+            y_counts = torch.unique(y, return_counts=True)[1]
+            # y_wts = 1 - y_counts / y_counts.sum()
+            loss = F.cross_entropy(Y, y, label_smoothing=0.2)
+        else:
+            Y = Y.flatten()
+            loss = loss_fn(Y, y)
         optimizer.zero_grad()
         loss.backward()
         losses.append(loss.item())
         optimizer.step()
 
     print(f"Epoch {epoch + 1} Train - Total avg. loss: {sum(losses) / len(losses)}")
-    writer.add_scalar("Loss/train", sum(losses) / len(losses), epoch)
+    writer.add_scalar("Loss/train", sum(losses) / len(losses), epoch + 1)
 
     ## Validation
     if (epoch + 1) % 10 == 0:
@@ -162,18 +162,22 @@ for epoch in range(300):
         model.eval()
         losses = []
         for i, (x, y, gr) in enumerate(dataloaders[1]):
-            gr, x, y = gr.to(device), x.to(device), y.to(device)
+            gr, x, y = gr.to(device), x.to(device), y.to(device)  
             with torch.no_grad():
                 Y = model(gr, x)
-            Y = Y.flatten()
-            loss = loss_fn(Y, y)
+            if labeled == True:      
+                y_counts = torch.unique(y, return_counts=True)[1]
+                # y_wts = 1 - y_counts / y_counts.sum()
+                loss = F.cross_entropy(Y, y, label_smoothing=0.2)
+            else:
+                Y = Y.flatten()
+                loss = loss_fn(Y, y)
             losses.append(loss)
             torch.save(y.detach().cpu(), f'results/val_m{main_level}.s{sub_level}_e{epoch+1}_b{i}.gt.pt')
             torch.save(Y.detach().cpu(), f'results/val_m{main_level}.s{sub_level}_e{epoch+1}_b{i}.result.pt')
-    
+        writer.add_scalar("Loss/val", sum(losses) / len(losses), epoch + 1)
         print(f" ==== Epoch {epoch + 1} Val - Total avg. loss: {sum(losses) / len(losses)}")
-
-torch.save(model, 'saved_models/model_dict_s2')
+        torch.save(model, f'saved_models/model_dict_e{epoch+1}')
 
 ## Test
 model.eval()
@@ -182,15 +186,15 @@ for i, (x, y, gr) in enumerate(dataloaders[2]):
     gr, x, y = gr.to(device), x.to(device), y.to(device)
     with torch.no_grad():
         Y = model(gr, x)
-    Y = Y.flatten()
-    loss = loss_fn(Y, y)
+    if labeled == True:           
+        y_counts = torch.unique(y, return_counts=True)[1]
+        # y_wts = 1 - y_counts / y_counts.sum()
+        loss = F.cross_entropy(Y, y, label_smoothing=0.2)
+    else:
+        Y = Y.flatten()
+        loss = loss_fn(Y, y)
     losses.append(loss)
-    torch.save(y.detach().cpu(), f'results/test_{top}.m{main_level}.s{sub_level}_b{i}.gt.pt')
-    torch.save(Y.detach().cpu(), f'results/test_{top}.m{main_level}.s{sub_level}_b{i}.result.pt')
+    torch.save(y.detach().cpu(), f'results/test.m{main_level}.s{sub_level}_b{i}.gt.pt')
+    torch.save(Y.detach().cpu(), f'results/test.m{main_level}.s{sub_level}_b{i}.result.pt')
 
 print(f"Test - Total avg. loss: {sum(losses) / len(losses)}")
-
-
-
-
-# print(prof.key_averages().table(sort_by="self_cuda_memory_usage", row_limit=10))
