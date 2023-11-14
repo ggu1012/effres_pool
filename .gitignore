@@ -10,3 +10,5 @@ runs
 results
 *.ipynb
 *.csv
+saved_models
+baselines

@@ -24,6 +24,8 @@ class VaGNN(nn.Module):
 
         assert gnn_dims[-1] == mlp_dims[0]
 
+        self.act = nn.LeakyReLU()
+        self.final_act = nn.Tanh()
         floor_step = [
             # dglnn.GATConv(gnn_dims[i], gnn_dims[i + 1], num_heads=1, feat_drop=0.5).to(
             #     device
@@ -35,9 +37,7 @@ class VaGNN(nn.Module):
         self.floor_step = nn.ModuleList(floor_step)
 
         print(self.floor_step)
-
-        mlp = [nn.Linear(gnn_dims[-1], mlp_dims[0]).to(device)]
-        mlp += [
+        mlp = [
             nn.Linear(mlp_dims[i], mlp_dims[i+1]).to(device)
             for i in range(len(mlp_dims) - 1)
         ]
@@ -53,7 +53,7 @@ class VaGNN(nn.Module):
         xx = X
         for i in range(len(self.floor_step)):
             xx = self.floor_step[i](sgr, xx)
-            xx = F.relu(xx)
+            xx = self.act(xx)
             xx = self.dropout(xx)
 
         sgr.ndata['x1'], sgr.ndata['x2']  = torch.hsplit(xx, 2)
@@ -62,8 +62,11 @@ class VaGNN(nn.Module):
         sg.update_all(fn.copy_u('x1', 'm'), fn.max('m', 'y_max'))
         sg.update_all(fn.copy_u('x2', 'm'), fn.max('m', 'y_min'))
         xx = torch.cat([sg.ndata['y_max'].pop('net'), sg.ndata['y_min'].pop('net')], dim=1)
-        for i in range(len(self.mlp)):
+
+        for i in range(len(self.mlp)-1):
             xx = self.mlp[i](xx)
-            xx = F.tanh(xx)
+            xx = self.act(xx)
             xx = self.dropout(xx)
+        xx = self.mlp[-1](xx)
+        xx = self.final_act(xx)
         return xx

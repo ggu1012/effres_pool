@@ -24,8 +24,8 @@ def run_HyperEF(dataset, main_level, sub_level):
     top_var = re.match(r'^(.*)\.icc2\.pklz$', basen).group(1)
     chunkname = f'graph/pre_process/{top_var}.m{main_level}.s{sub_level}.pkl'
     with gzip.open(dataset, 'rb') as f:
-        dataset = pickle.load(f)
-    H, net2node, net_map, node_map = pklz_to_incmat(dataset)
+        obj = pickle.load(f)
+    H, net2node, net_map, node_map = pklz_to_incmat(dataset, obj)
     idx_mat, new_net2nodes = HyperEF(net2node, main_level, sub_level, 42312)
     net2nodes = [net2node, *new_net2nodes]
     with gzip.open(chunkname, 'wb') as f:
@@ -42,11 +42,10 @@ def main():
         dsets = glob(f'../DREAMPlace/install/dataset/*/*.icc2.pklz')
 
     jobs = []
-    for ml in [2, 3]:
+    for ml in [1, 2, 3]:
         for sl in [2, 3]:
             jobs += [run_HyperEF.remote(dset, ml, sl) for dset in dsets]
     result = ray.get(jobs)
-
     print(result)
 
 if __name__ == '__main__':

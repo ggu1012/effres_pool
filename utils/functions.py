@@ -9,13 +9,18 @@ import torch
 from torch.utils.data import Dataset
 from scipy.sparse import csc_array
 import dgl.sparse as dglsp
+import os
+import re
 
-def pklz_to_incmat(pkl):
+def pklz_to_incmat(dname, pkl, debug=False):
     """
     Convert obtained dataset (.pklz) to hypergraph incidence matrix (scipy.sparse.csc)
     - Remove singleton edges and nodes
     return: H (scipy.sparse), net2node (list), net_mapper (list)
     """
+
+    basen = os.path.basename(dname)
+    top_var = re.match(r'^(.*)\.icc2\.pklz$', basen).group(1)
 
     pin2net = np.array(pkl["pin_info"]["pin2net_map"])
     pin2node = np.array(pkl["pin_info"]["pin2node_map"])
@@ -41,10 +46,22 @@ def pklz_to_incmat(pkl):
             net_out[e] = v
     no_out_net_idx = np.nonzero(net_out == -1)[0]
 
-    net2node = np.array([list(set(x)) for x in net2node], dtype=object)
+    # remove net w/ top 5% WL
+    if not os.path.exists(f'dataset/y_HPWL/{top_var}_raw.pt'):
+        print(f"NO HPWL FILE for {top_var}.pt")
+        exit()
+    hpwl_collection = torch.load(f'dataset/y_HPWL/{top_var}_raw.pt')
+    assert len(hpwl_collection) == net_num
+    cut_off = []
+    top_5p = hpwl_collection.min() + (hpwl_collection.max() - hpwl_collection.min()) * 95 / 100
+    for net in range(net_num):
+        if hpwl_collection[net] > top_5p:
+            cut_off.append(net)
+    cut_off = np.array(cut_off, dtype=int)
 
     ### incidence matrix w/ sparse mat.
     remove_net_idx = np.union1d(no_out_net_idx, singleton_edge_idx)
+    remove_net_idx = np.union1d(remove_net_idx, cut_off)
 
     # remove singleton hedge in inc mat
     if len(remove_net_idx) > 0:
@@ -54,6 +71,17 @@ def pklz_to_incmat(pkl):
     H = H[:, np.array(new_net_mapper)]
 
     void_node = np.nonzero(H.sum(axis=1) == 0)[0]
+
+    if debug:
+        print("Removed net names ====")
+        for x in pkl['net_info']['net_name2id_map'].keys():
+            if pkl['net_info']['net_name2id_map'][x] in remove_net_idx:
+                print(x)
+        print("\n\nRemoved node names ====")
+        for x in pkl['node_info']['node_name2id_map'].keys():
+            if pkl['node_info']['node_name2id_map'][x] in void_node:
+                print(x)
+
     new_node_mapper = np.delete(np.arange(H.shape[0]), void_node)
     H = H[new_node_mapper]
 

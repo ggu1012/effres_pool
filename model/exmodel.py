@@ -17,6 +17,11 @@ Utilize 3-cycle uniform expander graph converted from hypergraph
 def scatter_cat_up(edges):
     return {"cat_feat": torch.hstack([edges.src["x"], edges.dst["x"]])}
 
+def min_max(y):
+    _min = y.min()
+    _max = y.max()
+    return (((y - _min) / (_max - _min)) -0.5) * 2 
+
 
 class EXGNN(nn.Module):
     def __init__(self, gnn_dims, mlp_dims, tail_dims = -1, pool_level = 2, device="cpu"):
@@ -29,14 +34,16 @@ class EXGNN(nn.Module):
         else:
             assert mlp_dims[0] == gnn_dims[-1]
 
+
         self.act = nn.Tanh()
+        self.final_act = min_max
         self.pool_level = pool_level
         floor_step = [
             # dglnn.GATConv(gnn_dims[i], gnn_dims[i + 1], num_heads=1, feat_drop=0.5).to(
             #     device
             # )
             dglnn.SAGEConv(
-                gnn_dims[i], gnn_dims[i + 1], "pool", feat_drop=0.5, activation=self.act
+                gnn_dims[i], gnn_dims[i + 1], "mean", feat_drop=0.5, activation=self.act
             ).to(device)
             for i in range(self.pool_level + 1)
         ] + [
@@ -49,7 +56,7 @@ class EXGNN(nn.Module):
             dglnn.SAGEConv(
                 gnn_dims[i] + gnn_dims[2 * self.pool_level + 1 - i],
                 gnn_dims[i + 1],
-                "pool",
+                "mean",
                 feat_drop=0.5,
                 activation=self.act,
             ).to(device)
@@ -60,7 +67,7 @@ class EXGNN(nn.Module):
 
         if isinstance(tail_dims, list):
             self.tail_gnn = nn.ModuleList([
-                dglnn.SAGEConv(tail_dims[i], tail_dims[i+1], "pool", feat_drop=0.5, activation=self.act).to(device)
+                dglnn.SAGEConv(tail_dims[i], tail_dims[i+1], "mean", feat_drop=0.5, activation=self.act).to(device)
                 for i in range(len(tail_dims) - 1)
             ])
             mlp = [nn.Linear(tail_dims[-1], mlp_dims[1]).to(device)]
@@ -74,16 +81,7 @@ class EXGNN(nn.Module):
         self.dropout = nn.Dropout(0.5).to(device)
 
     def forward(self, gr, X):
-
-        # Tail GNN
-        if hasattr(self, 'head_gnn'):
-            sgr = dgl.edge_type_subgraph(gr, [("lv0", "to", "lv0")])
-            xx = X
-            for layer in self.head_gnn:
-                xx = layer(sgr, xx)
-            gr.ndata["x"] = {"lv0": xx}
-        else:
-            gr.ndata["x"] = {"lv0": X}
+        gr.ndata["x"] = {"lv0": X}
 
         # Goes down
         #   GNN
@@ -144,8 +142,11 @@ class EXGNN(nn.Module):
             [sg.ndata["y_max"].pop("net"), sg.ndata["y_min"].pop("net")], dim=1
         )
 
-        for i in range(len(self.mlp)):
+        for i in range(len(self.mlp)-1):
             xx = self.mlp[i](xx)
             xx = self.act(xx)
             xx = self.dropout(xx)
+        xx = self.mlp[-1](xx)
+        # xx = self.final_act(xx)
+
         return xx

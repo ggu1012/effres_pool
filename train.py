@@ -26,7 +26,7 @@ sub_level = 2
 tail = 2
 num_labels = 10
 mode = 'label'
-val_set = ['ariane', 'RocketTile']
+val_set = ['jpeg_encoder', 'RocketTile']
 test_set = ['bsg_chip']
 device = 'cuda:0'
 ################
@@ -55,14 +55,12 @@ device = 'cuda:0'
 
 
 gnn_dims = [8, 64, 256, 256, 64, 32]
-tail_dims = [32, 128, 64, 8]
-mlp_dims = [8, 128, 16, 1] 
+tail_dims = [32, 16]
+mlp_dims = [16, 64, 1] 
 
 assert len(gnn_dims) == 2 * main_level + 2
 
 dataset_files = glob(f'dataset/y_HPWL/*_raw.pt')
-mlp_dims += [1]
-
 train_dataset = []
 val_dataset = []
 test_dataset = []
@@ -75,8 +73,19 @@ for i, ds in enumerate(dataset_files):
     else:
         train_dataset.append(ds)
 
+print("Initialize model")
+
+loss_fn = nn.MSELoss()
+# loss_fn = nn.SmoothL1Loss()
+
+model = EXGNN(gnn_dims,  mlp_dims, tail_dims, main_level, device)
+# model = VaGNN(gnn_dims, mlp_dims, device)
+
+optimizer = torch.optim.SGD(model.parameters(), lr = 1e-3, weight_decay=5e-2)
+
+
 dataloaders = []
-batch_sizes = [8, 8, 2]
+batch_sizes = [1, 1, 1]
 for i, mode in enumerate([train_dataset, val_dataset, test_dataset]):
     xs = []
     ys = []
@@ -86,35 +95,36 @@ for i, mode in enumerate([train_dataset, val_dataset, test_dataset]):
         rem = re.match(r'(.*)_(.*)_(.*)_.*\.pt$', basen)
         top, cu, ca = rem.group(1), rem.group(2), rem.group(3)
         graph_fn = f'graph/dgl/{top}_{cu}_{ca}.bin'
+        chunkname = f'graph/pre_process/{top}_{cu}_{ca}.m{main_level}.s{sub_level}.pkl'
+        with gzip.open(chunkname, 'rb') as f:
+            Hs, idx_mat, net2nodes, net_map, node_map = pickle.load(f)
+
         if not os.path.exists(graph_fn):
             with gzip.open(f'../DREAMPlace/install/dataset/{top}/{top}_{cu}_{ca}.icc2.pklz') as f:
                 dataset = pickle.load(f)
-            H, net2node, net_map, node_map = pklz_to_incmat(dataset)
-            print(f"Top: {top}, #Nodes: {H.shape[0]}, #Edges: {H.shape[1]}")
-            chunkname = f'graph/pre_process/{top}_{cu}_{ca}.m{main_level}.s{sub_level}.pkl'
-
-            with gzip.open(chunkname, 'rb') as f:
-                Hs, idx_mat, net2nodes, net_map, node_map = pickle.load(f)
 
             rows = idx_mat
             cols = [np.arange(len(x)) for x in idx_mat]
             ASMs = [coo_to_dglsp(rows[i], cols[i]) for i in range(len(idx_mat))] # ASM.shape = (num_clusters, num_nodes)
 
-            gr = multi_level_expander_graph(lil_to_dglsp(net2node), net2nodes, ASMs, 3, 'cpu')        
+            gr = multi_level_expander_graph(net2nodes, ASMs, 3, 'cpu')        
             dgl.save_graphs(graph_fn, [gr])
         else:
             gr = dgl.load_graphs(graph_fn)[0][0].to('cpu')
 
-
-        x = torch.load(f'dataset/x_node_feature/{top}_{cu}_{ca}.pt').to(torch.float)
+        x = torch.load(f'dataset/x_node_feature/{top}_{cu}_{ca}.pt').to(torch.float) # already cut-off
         # x = torch.rand((gr.num_nodes('lv0'), 5), dtype=torch.float)
 
         ## HPWL MOD
-        y = torch.load(f'dataset/y_HPWL/{basen}').to(torch.float)
+        y = torch.load(f'dataset/y_HPWL/{basen}').to(torch.float)[net_map]
         y = torch.log10(y)
+        # y = y - y.min() # 0 ~
+        # y = y - y.max() # ~ 0
         _max = y.max()
         _min = y.min()
-        y = (((y - _min) / (_max - _min)) -0.5) * 2 # -1 ~ 1
+        # y = (((y - _min) / (_max - _min)) -0.5) * 2 # -1 ~ 1
+        y = ((y - _min) / (_max - _min)) # 0 ~ 1
+
         ##
 
         xs.append(x)
@@ -123,12 +133,6 @@ for i, mode in enumerate([train_dataset, val_dataset, test_dataset]):
     tmp = CustomDataset(xs, ys, graphs)
     dataloaders.append(GraphDataLoader(tmp, batch_size = batch_sizes[i], shuffle= True, collate_fn=xcollate_fn))
 
-print("Initialize model")
-loss_fn = nn.MSELoss()
-# loss_fn = nn.SmoothL1Loss()
-model = EXGNN(gnn_dims,  mlp_dims, tail_dims, main_level, device)
-# model = VaGNN(gnn_dims, mlp_dims, device)
-optimizer = torch.optim.SGD(model.parameters(), lr = 5e-2)
 
 # dataloaders = [train, val, test]
 for epoch in range(300):
@@ -152,6 +156,9 @@ for epoch in range(300):
 
     ## Validation
     if (epoch + 1) % 10 == 0:
+        torch.save(y.detach().cpu(), f'results/train_m{main_level}.s{sub_level}_e{epoch+1}.gt.pt')
+        torch.save(Y.detach().cpu(), f'results/train_m{main_level}.s{sub_level}_e{epoch+1}.result.pt')
+
         model.eval()
         losses = []
         for i, (x, y, gr) in enumerate(dataloaders[1]):
@@ -166,7 +173,7 @@ for epoch in range(300):
     
         print(f" ==== Epoch {epoch + 1} Val - Total avg. loss: {sum(losses) / len(losses)}")
 
-torch.save(model, './model_dict_s2')
+torch.save(model, 'saved_models/model_dict_s2')
 
 ## Test
 model.eval()
