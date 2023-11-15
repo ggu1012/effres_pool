@@ -15,18 +15,21 @@ Utilize 3-cycle uniform expander graph converted from hypergraph
 
 # dgl udf
 def scatter_cat_up(edges):
-    return {"cat_feat": torch.hstack([edges.src["x"], edges.dst["x"]])}
+    return {"cat_feat": torch.hstack([edges.src["x_"], edges.dst["x_"]])}
+
 
 class EXGNN(nn.Module):
-    def __init__(self, gnn_dims, mlp_dims, tail_dims = -1, pool_level = 2, device="cpu"):
+    def __init__(
+        self, gnn_dims, mlp_dims, x_net_dim, tail_dims=-1, pool_level=2, device="cpu"
+    ):
         super().__init__()
 
         assert len(gnn_dims) == 2 * (pool_level + 1)
         if isinstance(tail_dims, list):
             assert tail_dims[0] == gnn_dims[-1]
-            assert mlp_dims[0] == tail_dims[-1]
+            assert mlp_dims[0] == tail_dims[-1] + x_net_dim
         else:
-            assert mlp_dims[0] == gnn_dims[-1]
+            assert mlp_dims[0] == gnn_dims[-1] + x_net_dim
 
         self.act = nn.Tanh()
         self.pool_level = pool_level
@@ -58,13 +61,21 @@ class EXGNN(nn.Module):
         self.floor_step = nn.ModuleList(floor_step)
 
         if isinstance(tail_dims, list):
-            self.tail_gnn = nn.ModuleList([
-                dglnn.SAGEConv(tail_dims[i], tail_dims[i+1], "mean", feat_drop=0.5, activation=self.act).to(device)
-                for i in range(len(tail_dims) - 1)
-            ])
-            mlp = [nn.Linear(tail_dims[-1], mlp_dims[1]).to(device)]
+            self.tail_gnn = nn.ModuleList(
+                [
+                    dglnn.SAGEConv(
+                        tail_dims[i],
+                        tail_dims[i + 1],
+                        "mean",
+                        feat_drop=0.5,
+                        activation=self.act,
+                    ).to(device)
+                    for i in range(len(tail_dims) - 1)
+                ]
+            )
+            mlp = [nn.Linear(tail_dims[-1] + x_net_dim, mlp_dims[1]).to(device)]
         else:
-            mlp = [nn.Linear(gnn_dims[-1], mlp_dims[1]).to(device)]
+            mlp = [nn.Linear(gnn_dims[-1] + x_net_dim, mlp_dims[1]).to(device)]
         mlp += [
             nn.Linear(mlp_dims[i], mlp_dims[i + 1]).to(device)
             for i in range(1, len(mlp_dims) - 1)
@@ -72,57 +83,56 @@ class EXGNN(nn.Module):
         self.mlp = nn.ModuleList(mlp)
         self.dropout = nn.Dropout(0.5).to(device)
 
-    def forward(self, gr, X):
-        gr.ndata["x"] = {"lv0": X}
-
+    def forward(self, gr):
         # Goes down
         #   GNN
-        # o ----
-        #        \  Pool
-        #         \
-        #          o
+        # o ---- o
+        # x     x_\  Pool
+        #          \
+        #           o
+        #           x
+
+        layer_subg = [
+            dgl.edge_type_subgraph(gr, [(f"lv{i}", "to", f"lv{i}")])
+            for i in range(self.pool_level + 1)
+        ]
 
         for i in range(self.pool_level):
-            sg = dgl.edge_type_subgraph(gr, [(f"lv{i}", "to", f"lv{i}")])
-            xx = gr.ndata["x"].pop(f"lv{i}")
-            xx = self.floor_step[i](sg, xx)
-            gr.ndata["x"] = {f"lv{i}": xx}
+            sg = layer_subg[i]
+            sg.ndata["x_"] = self.floor_step[i](sg, sg.ndata["x"])
 
             sg = dgl.edge_type_subgraph(gr, [(f"lv{i}", "downwards", f"lv{i+1}")])
-            sg.update_all(fn.copy_u("x", "m"), fn.mean("m", "x"))
-            # xx = gr.ndata["x"].pop(f"lv{i+1}")
-            # gr.ndata["x"][f"lv{i+1}"] = F.relu(xx)
+            sg.update_all(fn.copy_u("x_", "m"), fn.mean("m", "x"))
 
         # Bottom
-        sg = dgl.edge_type_subgraph(
-            gr, [(f"lv{self.pool_level}", "to", f"lv{self.pool_level}")]
-        )
-        xx = gr.ndata["x"].pop(f"lv{self.pool_level}")
-        xx = self.floor_step[self.pool_level](sg, xx)
+        # o --- o
+        # x     x_
+        sg = layer_subg[self.pool_level]
+        sg.ndata["x_"] = self.floor_step[self.pool_level](sg, sg.ndata["x"])
 
         # Goes up
-        #              GNN
-        #             ---- o
-        #            /
+        #    concat      GNN
+        #    ----->   o ---- o
+        #            /x__    x_
         #   Uplift  /
         #          o
+        #          x_ (pop)
 
         pl = self.pool_level
         for i in range(pl):
             rev_i = pl - i - 1
             sg = dgl.edge_type_subgraph(gr, [(f"lv{rev_i+1}", "upwards", f"lv{rev_i}")])
-            sg.update_all(scatter_cat_up, fn.sum("cat_feat", "x"))
-            sg = dgl.edge_type_subgraph(gr, [(f"lv{rev_i}", "to", f"lv{rev_i}")])
-            xx = sg.ndata.pop("x")
-            xx = self.floor_step[pl + i + 1](sg, xx)
-            sg.ndata["x"] = xx
+            sg.update_all(scatter_cat_up, fn.sum("cat_feat", "x__"))
+            sg = layer_subg[rev_i]
+            _ = sg.ndata.pop("x_")
+            sg.ndata["x_"] = self.floor_step[pl + i + 1](sg, sg.ndata["x__"])
 
         # Tail GNN
-        sgr = dgl.edge_type_subgraph(gr, [("lv0", "to", "lv0")])
-        if hasattr(self, 'tail_gnn'):
-            xx = sgr.ndata["x"]
+        sgr = layer_subg[0]
+        xx = sgr.ndata["x_"]
+        if hasattr(self, "tail_gnn"):
             for layer in self.tail_gnn:
-                xx = layer(sgr, xx) 
+                xx = layer(sgr, xx)
 
         sgr.ndata["x1"], sgr.ndata["x2"] = torch.hsplit(xx, 2)
 
@@ -130,11 +140,15 @@ class EXGNN(nn.Module):
         sg = dgl.edge_type_subgraph(gr, ["conn"])
         sg.update_all(fn.copy_u("x1", "m"), fn.max("m", "y_max"))
         sg.update_all(fn.copy_u("x2", "m"), fn.max("m", "y_min"))
-        xx = torch.cat(
-            [sg.ndata["y_max"].pop("net"), sg.ndata["y_min"].pop("net")], dim=1
+        xx = torch.hstack(
+            [
+                sg.ndata["y_max"]["net"],
+                sg.ndata["y_min"]["net"],
+                sg.ndata["x_net"]["net"],
+            ]
         )
 
-        for i in range(len(self.mlp)-1):
+        for i in range(len(self.mlp) - 1):
             xx = self.mlp[i](xx)
             xx = self.act(xx)
             xx = self.dropout(xx)

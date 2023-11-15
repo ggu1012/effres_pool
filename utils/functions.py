@@ -119,17 +119,16 @@ def coo_to_dglsp(row: np.array, col: np.array):
     return dglsp.spmatrix(torch.vstack([_row, _col]))
 
 def xcollate_fn(data):
-    xs, ys, graphs = map(list, zip(*data))
+    graphs, ys = map(list, zip(*data))
     graph_batch = dgl.batch(graphs)
-    return torch.cat(xs, dim=0), torch.cat(ys, dim=0), graph_batch
+    return graph_batch, torch.cat(ys, dim=0)
 
 
 class CustomDataset(Dataset):
-    def __init__(self, xs, ys, graphs):
-        self.xs = xs
+    def __init__(self, graphs, ys):
         self.ys = ys
         self.graphs = graphs
-        self.size = len(xs)
+        self.size = len(graphs)
     
     def __len__(self):
         return self.size
@@ -138,5 +137,5 @@ class CustomDataset(Dataset):
         # 반환값 : (a, b)
         # a : idx에 해당하는 인덱스만 1이고 나머지는 0인 크기 (1, 8)짜리 one-hot vector
         # b : idx
-        return self.xs[idx], self.ys[idx], self.graphs[idx]
+        return self.graphs[idx], self.ys[idx]
     

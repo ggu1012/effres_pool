@@ -189,14 +189,11 @@ def star_hetero(H):
         }
     )
 
-def multi_level_expander_graph(net2nodes: list, assignment_mats: List[dglsp.SparseMatrix], expander_sz=3, device='cpu'):
+def multi_level_expander_graph(H: dglsp.SparseMatrix, net2nodes: list, assignment_mats: List[dglsp.SparseMatrix], expander_sz=3, device='cpu'):
 
     ## Build uniform 3-cycle expander graph from net2node list (incidence matrix)
 
     assert len(net2nodes) == len(assignment_mats) + 1
-
-    H = lil_to_dglsp(net2nodes[0])
-
     data_dict = {}
     for lv, n2n in enumerate(net2nodes):
         key = (f'lv{lv}', 'to', f'lv{lv}')
