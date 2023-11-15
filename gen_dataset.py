@@ -220,9 +220,9 @@ if __name__ == "__main__":
     # for x in dset_file_split:
     #     generate_dataset(x)
 
-    ray.init(num_cpus=20)
-    # job_list = [generate_HPWL.remote(x) for x in dset_files]
-    job_list = [generate_xfeat.remote(x) for x in dset_files]
+    ray.init(num_cpus=32)
+    job_list = [generate_HPWL.remote(x) for x in dset_files]
+    job_list += [generate_xfeat.remote(x) for x in dset_files]
     print(f"Jobs : {len(job_list)}")
     result = ray.get(job_list)
 

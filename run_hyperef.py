@@ -12,11 +12,10 @@ from utils.functions import *
 
 ####
 main_level = 1
+sub_level = 2
 tail = 2
 device = 'cuda:0'
-top = 'bsg_chip'
 ####
-sub_level = 2
 
 @ray.remote
 def run_HyperEF(dataset, main_level, sub_level):
@@ -35,7 +34,7 @@ def run_HyperEF(dataset, main_level, sub_level):
 
 def main():
     top = ''
-    ray.init(num_cpus = 16)
+    ray.init(num_cpus = 32)
     if top:
         dsets = glob(f'../DREAMPlace/install/dataset/{top}/*.icc2.pklz')
     else:

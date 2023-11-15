@@ -14,14 +14,13 @@ import ray
 def net2_graph(dname, pkl):
     ## Variation of utils.hypergraph_conversion.driver2load
     H, orig_net2node, node_mapper, net_mapper = pklz_to_incmat(
-        dname, pkl
+        dname, pkl, debug=False
     )  # @@ BRAINWASH @@
 
     pin2node = np.array(pkl["pin_info"]["pin2net_map"])  # @@ BRAINWASH @@
     pin2net = np.array(pkl["pin_info"]["pin2node_map"])  # @@ BRAINWASH @@
     pin_direction = np.array(pkl["pin_info"]["pin_direct"])
     H = H.T
-
     rev_net_mapper = {}
     for i, nd in enumerate(net_mapper):
         rev_net_mapper[nd] = i
@@ -84,8 +83,6 @@ def net2_graph(dname, pkl):
         net2node.append(list(nodes))
 
     # src_dst = {}
-    row = []
-    col = []
     A = dok_array((num_nodes, num_nodes), dtype=int)
     for i in range(len(net2node)):
         srcs = net_in[i]
@@ -226,6 +223,7 @@ def main():
     else:
         dsets = glob(f'../DREAMPlace/install/dataset/*/*.icc2.pklz')
 
+    # one_job(dsets[0], k_net, k_cell)
     ray.init(num_cpus = 32)
 
     jobs = []

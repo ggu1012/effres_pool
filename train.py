@@ -27,8 +27,8 @@ sub_level = 2
 tail = 2
 num_labels = 20
 labeled = False
-val_set = ['jpeg_encoder', 'RocketTile']
-test_set = ['bsg_chip']
+val_set = ['bsg_chip', 'RocketTile']
+test_set = ['ariane']
 device = 'cuda:0'
 ################
 
@@ -92,7 +92,7 @@ train_dataset = []
 val_dataset = []
 test_dataset = []
 
-ray.init(num_cpus=24)
+ray.init(num_cpus=32)
 
 for i, ds in enumerate(dataset_files):
     if re.match(f'.*({"|".join(val_set)}).*', ds):
@@ -104,8 +104,9 @@ for i, ds in enumerate(dataset_files):
 
 print("Initialize model")
 
-loss_fn = nn.MSELoss()
+# loss_fn = nn.MSELoss()
 # loss_fn = nn.SmoothL1Loss()
+loss_fn = lambda input, target, wts: (wts * (input - target)**2).mean()
 
 model = EXGNN(gnn_dims,  mlp_dims, tail_dims, main_level, device)
 # model = VaGNN(gnn_dims, mlp_dims, device)
@@ -145,7 +146,8 @@ for epoch in range(300):
             loss = F.cross_entropy(Y, y, label_smoothing=0.2)
         else:
             Y = Y.flatten()
-            loss = loss_fn(Y, y)
+            wts = y
+            loss = loss_fn(Y, y, wts)
         optimizer.zero_grad()
         loss.backward()
         losses.append(loss.item())
@@ -171,7 +173,8 @@ for epoch in range(300):
                 loss = F.cross_entropy(Y, y, label_smoothing=0.2)
             else:
                 Y = Y.flatten()
-                loss = loss_fn(Y, y)
+                wts = y
+                loss = loss_fn(Y, y, wts)
             losses.append(loss)
             torch.save(y.detach().cpu(), f'results/val_m{main_level}.s{sub_level}_e{epoch+1}_b{i}.gt.pt')
             torch.save(Y.detach().cpu(), f'results/val_m{main_level}.s{sub_level}_e{epoch+1}_b{i}.result.pt')
@@ -192,7 +195,8 @@ for i, (x, y, gr) in enumerate(dataloaders[2]):
         loss = F.cross_entropy(Y, y, label_smoothing=0.2)
     else:
         Y = Y.flatten()
-        loss = loss_fn(Y, y)
+        wts = y
+        loss = loss_fn(Y, y, wts)
     losses.append(loss)
     torch.save(y.detach().cpu(), f'results/test.m{main_level}.s{sub_level}_b{i}.gt.pt')
     torch.save(Y.detach().cpu(), f'results/test.m{main_level}.s{sub_level}_b{i}.result.pt')

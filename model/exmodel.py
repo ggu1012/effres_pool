@@ -17,12 +17,6 @@ Utilize 3-cycle uniform expander graph converted from hypergraph
 def scatter_cat_up(edges):
     return {"cat_feat": torch.hstack([edges.src["x"], edges.dst["x"]])}
 
-def min_max(y):
-    _min = y.min()
-    _max = y.max()
-    return (((y - _min) / (_max - _min)) -0.5) * 2 
-
-
 class EXGNN(nn.Module):
     def __init__(self, gnn_dims, mlp_dims, tail_dims = -1, pool_level = 2, device="cpu"):
         super().__init__()
@@ -34,9 +28,7 @@ class EXGNN(nn.Module):
         else:
             assert mlp_dims[0] == gnn_dims[-1]
 
-
         self.act = nn.Tanh()
-        self.final_act = min_max
         self.pool_level = pool_level
         floor_step = [
             # dglnn.GATConv(gnn_dims[i], gnn_dims[i + 1], num_heads=1, feat_drop=0.5).to(

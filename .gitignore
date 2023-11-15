@@ -12,3 +12,4 @@ results
 *.csv
 saved_models
 baselines
+net_deg
